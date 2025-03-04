@@ -1,0 +1,6 @@
+@BD_Assignment2_2025_HostAddress = http://localhost:5279
+
+GET {{BD_Assignment2_2025_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
