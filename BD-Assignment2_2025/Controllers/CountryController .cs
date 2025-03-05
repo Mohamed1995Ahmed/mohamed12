@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Net;
 
+
 [Route("api/countries")]
 [ApiController]
 public class CountryController : ControllerBase
@@ -21,9 +22,10 @@ public class CountryController : ControllerBase
     private readonly string _apiKey;
     private static readonly ConcurrentDictionary<string, DateTime> temporaryBlockedCountries = new();
     private readonly ILogger<CountryController> _logger;
-    private static readonly ConcurrentBag<object> blockedAttempts = new();
+    private static readonly List<BlockedAttemptLog> blockedAttemptsLog = new();
 
-    public CountryController(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<CountryController> logger)
+
+    public CountryController (IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<CountryController> logger)
     {
         _httpClientFactory = httpClientFactory;
         _apiBaseUrl = configuration["ThirdPartyAPI:BaseUrl"];
@@ -32,24 +34,24 @@ public class CountryController : ControllerBase
         StartCleanupTask();
     }
 
-    /// <summary>
+
     /// Blocks a country by its country code.
-    /// </summary>
     [HttpPost("block")]
     public IActionResult BlockCountry([FromBody] string countryCode)
     {
+       
         if (string.IsNullOrWhiteSpace(countryCode) || !IsValidCountryCode(countryCode))
             return BadRequest("Invalid country code. Must be a two-letter uppercase code.");
 
         if (!blockedCountries.TryAdd(countryCode, true))
             return Conflict("Country already blocked.");
 
-        return Ok("Country blocked successfully.");
+        return Ok("Country blocked successfully" );
+       
     }
 
-    /// <summary>
+   
     /// Unblocks a country by its country code.
-    /// </summary>
     [HttpDelete("block/{countryCode}")]
     public IActionResult UnblockCountry(string countryCode)
     {
@@ -62,9 +64,7 @@ public class CountryController : ControllerBase
         return Ok("Country unblocked successfully.");
     }
 
-    /// <summary>
     /// Gets a paginated list of blocked countries.
-    /// </summary>
     [HttpGet("blocked")]
     public IActionResult GetBlockedCountries([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
@@ -100,9 +100,9 @@ public class CountryController : ControllerBase
 
         return Ok(countryInfo);
     }
-    /// <summary>
+  
+
     /// Temporarily blocks a country for a specified duration (1 to 1440 minutes).
-    /// </summary>
     [HttpPost("temporal-block")]
     public IActionResult TemporarilyBlockCountry([FromBody] TemporaryBlockRequest request)
     {
@@ -123,10 +123,8 @@ public class CountryController : ControllerBase
         return Ok($"Country {countryCode} temporarily blocked for {durationMinutes} minutes.");
     }
 
-
-    /// <summary>
     /// Unblocks a temporarily blocked country manually.
-    /// </summary>
+    
     [HttpDelete("temporal-block/{countryCode}")]
     public IActionResult UnblockTemporarilyBlockedCountry(string countryCode)
     {
@@ -139,9 +137,7 @@ public class CountryController : ControllerBase
         return Ok($"Country {countryCode} has been manually unblocked.");
     }
 
-    /// <summary>
     /// Retrieves a list of all temporarily blocked countries.
-    /// </summary>
     [HttpGet("temporal-blocked")]
     public IActionResult GetTemporarilyBlockedCountries()
     {
@@ -157,6 +153,8 @@ public class CountryController : ControllerBase
     {
         // Get the client's IP address
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers["User-Agent"].ToString(); // Get User-Agent
+
         if (string.IsNullOrEmpty(ipAddress))
         {
             return BadRequest("Unable to determine IP.");
@@ -185,11 +183,19 @@ public class CountryController : ControllerBase
             }
 
             var countryCode = countryCodeElement.GetString();
-
             bool isBlocked = blockedCountries.ContainsKey(countryCode) || temporaryBlockedCountries.ContainsKey(countryCode);
 
-            // Log the attempt
-            blockedAttempts.Add(new { ipAddress, Timestamp = DateTime.UtcNow, countryCode, isBlocked });
+            // Log the blocked attempt
+            var blockedAttemptLog = new BlockedAttemptLog
+            {
+                IpAddress = ipAddress,
+                Timestamp = DateTime.UtcNow,
+                CountryCode = countryCode,
+                IsBlocked = isBlocked,
+                UserAgent = userAgent
+            };
+
+            blockedAttemptsLog.Add(blockedAttemptLog); // Store in the in-memory list
             _logger.LogInformation("IP check attempt: {IP}, Country: {Country}, Blocked: {Blocked}", ipAddress, countryCode, isBlocked);
 
             return isBlocked ? Forbid("Access denied: Your country is restricted.") : Ok(new { Message = "Access granted.", CountryCode = countryCode, IP = ipAddress });
@@ -201,12 +207,28 @@ public class CountryController : ControllerBase
         }
     }
 
+    /// Returns a paginated list of blocked attempt logs.
+    [HttpGet("logs/blocked-attempts")]
+    public IActionResult GetBlockedAttempts([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+    {
+        if (page < 1 || pageSize < 1)
+            return BadRequest("Page and pageSize must be greater than 0.");
+
+        // Paginate the list of blocked attempt logs
+        var pagedLogs = blockedAttemptsLog.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
+        return Ok(new
+        {
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = blockedAttemptsLog.Count,
+            BlockedAttempts = pagedLogs
+        });
+    }
 
 
-    /// <summary>
-    /// Background task to remove expired temporary blocks.
-    /// </summary>
-    /// 
+
+    /// Background task to remove expired temporary blocks
     public class TemporaryBlockRequest
     {
         public string CountryCode { get; set; }
@@ -242,9 +264,7 @@ public class CountryController : ControllerBase
         return Regex.IsMatch(ipAddress, ipv4Pattern) || Regex.IsMatch(ipAddress, ipv6Pattern);
     }
 
-    /// <summary>
     /// Helper method to validate country codes.
-    /// </summary>
     private bool IsValidCountryCode(string countryCode)
     {
         return countryCode.Length == 2 && countryCode.ToUpper() == countryCode;
@@ -284,5 +304,13 @@ public class CountryController : ControllerBase
                 await Task.Delay(TimeSpan.FromMinutes(6), stoppingToken);
             }
         }
+    }
+    public class BlockedAttemptLog
+    {
+        public string IpAddress { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string CountryCode { get; set; }
+        public bool IsBlocked { get; set; }
+        public string UserAgent { get; set; }
     }
 }

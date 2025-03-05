@@ -36,36 +36,9 @@ app.UseSwaggerUI();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
-
-// In-memory storage for blocked countries
-var blockedCountries = new ConcurrentDictionary<string, bool>();
-var temporaryBlockedCountries = app.Services.GetRequiredService<ConcurrentDictionary<string, DateTime>>();
-var blockedAttempts = new ConcurrentBag<dynamic>();
-
-// Utility method for country code validation
-bool IsValidCountryCode(string code) => Regex.IsMatch(code, "^[A-Z]{2}$");
-
-// POST: Block a country
-
-
-// DELETE: Unblock a country
-
-
-// GET: List all blocked countries with pagination
-
-
-// POST: Temporarily block a country
-
-
-// GET: Find country by IP
-
-
-// GET: Check if IP is blocked
-
-
 app.Run();
 
-// Background service to clean up temporary blocked countries
+
 
     
 
